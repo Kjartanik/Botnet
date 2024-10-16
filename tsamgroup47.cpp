@@ -31,23 +31,20 @@
 
 // Creates a socket with reusable address, and bound to provided port
 // Function sets non-blocking if non-block is not set to 0
-int open_socket(int port_number, int non_block) {
+int set_non_blocking(int sockfd) {
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    return fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+}
+
+int open_socket(int port_number) {
     struct sockaddr_in addr;
     int sockfd;
     int on = 1;
 
+    // Create socket and set options
     if ((sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
         perror("Failed to open socket.");
         return -1;
-    }
-    if (non_block != 0) {
-        // Set non-block to handle mutliple connections
-        int flags = fcntl(sockfd, F_GETFL, 0);
-        if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            perror("Failed to set O_NONBLOCK.");
-            close(sockfd);
-            return -1;
-        } 
     }
     // Allow binding even if port already in use
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) {
@@ -55,6 +52,8 @@ int open_socket(int port_number, int non_block) {
         close(sockfd);
         return -1;
     }
+    set_non_blocking(sockfd); // Non-blocking to handle events as they arrive instead of waiting for them
+
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -68,6 +67,7 @@ int open_socket(int port_number, int non_block) {
     return sockfd;
 }
 
+// Note: In this botnet implementation if connection to the client is lost then the program cleansup and shuts down
 int main(int argc, char *argv[])
 {
     bool finished;
@@ -81,6 +81,8 @@ int main(int argc, char *argv[])
     socklen_t clientLen;                   // address length
     char buffer[5000];                     // Read buffer is of length 5000, all messages of higher length will be truncated
     std::vector<int> clientSocketsToClear; // List of closed sockets to remove
+
+    clientLen = sizeof(struct sockaddr_in);
 
     if (argc != 2)
     {
@@ -97,18 +99,28 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    int client_sock; 
-    // Create socket for connecting to the client
-    if (client_sock = open_socket(server_port, 0) < 0) { // 0 indicates NON_BLOCKING is off
+    int listen_sock; 
+    // Create socket for maintaining all connections
+    if ((listen_sock = open_socket(server_port)) < 0) { // 0 indicates NON_BLOCKING is off
         std::cout << "Failed to create client socket" << std::endl;
         exit(1);
     }
 
-    if (listen(client_sock, CLIENT_BACKLOG) < 0) {
+    // Start by connecting to client
+    if (listen(listen_sock, CLIENT_BACKLOG) < 0) {
         perror("Failed to listen for client on port");
-        close(client_sock);
+        close(listen_sock);
         exit(1);
     }
+    // Exit if accepting 
     std::cout << "Waiting for client to connect" << std::endl;
-    int client_connection = accept(client_sock, (struct sockaddr*)&client, &clientLen);
+    if (int client_connection = accept(listen_sock, (struct sockaddr*)&client, &clientLen) < 0) {
+        perror("Failed to accept an incoming connection");
+        close(listen_sock);
+        exit(1);
+    }
+
+ 
+
+
 }
